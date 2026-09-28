@@ -52,13 +52,30 @@ const createNetworkConfigSlice = (
   lastCustomUrl: undefined,
 
   setNetworkConfig: (config: Partial<NetworkConfig>) =>
-    set((state) => ({
-      networkConfig: { ...state.networkConfig, ...config },
-    })),
+    set((state) => {
+      const networkConfig = { ...state.networkConfig, ...config }
+      const changed = Object.keys(config).some(
+        (key) =>
+          networkConfig[key as keyof NetworkConfig] !==
+          state.networkConfig[key as keyof NetworkConfig],
+      )
+
+      return {
+        networkConfig,
+        ...(changed ? { connectionStatus: ConnectionStatus.IDLE } : {}),
+      }
+    }),
 
   resetNetworkConfig: () =>
-    set(() => ({
+    set((state) => ({
       networkConfig: DEFAULT_NETWORK_CONFIG,
+      ...(Object.keys(DEFAULT_NETWORK_CONFIG).some(
+        (key) =>
+          DEFAULT_NETWORK_CONFIG[key as keyof NetworkConfig] !==
+          state.networkConfig[key as keyof NetworkConfig],
+      )
+        ? { connectionStatus: ConnectionStatus.IDLE }
+        : {}),
     })),
 
   setConnectionStatus: (status: ConnectionStatus) =>
@@ -264,12 +281,10 @@ const createContractLoadSlice = (
       activeController = controller
       const { signal } = controller
 
-      set((state) => ({
+      set(() => ({
         activeContractId: contractId,
         contractLoadStatus: ContractLoadStatus.LOADING,
         contractLoadError: null,
-        ledgerData:
-          state.activeContractId === contractId ? state.ledgerData : {},
       }))
 
       try {
@@ -299,10 +314,17 @@ const createContractLoadSlice = (
           decodedValuesByKey,
         })
 
-        set(() => ({
-          ledgerData: Object.fromEntries(
-            mappedEntries.map((entry) => [entry.key, entry]),
-          ),
+        set((state) => ({
+          ledgerData: {
+            ...Object.fromEntries(
+              Object.entries(state.ledgerData).filter(
+                ([, entry]) => entry.contractId !== contractId,
+              ),
+            ),
+            ...Object.fromEntries(
+              mappedEntries.map((entry) => [entry.key, entry]),
+            ),
+          },
           contractLoadStatus:
             mappedEntries.length === 0
               ? ContractLoadStatus.EMPTY
@@ -341,7 +363,7 @@ const createWatchlistSlice = (
   addToWatchlist: (contractId: string, keyPath: string) =>
     set((state) => {
       const currentItems = state.watchlist[contractId] ?? []
-      
+
       // Check if item already exists (duplicate protection)
       const isDuplicate = currentItems.some((item) => item.keyPath === keyPath)
       if (isDuplicate) {
@@ -510,7 +532,8 @@ export const lensActions = {
     useLensStore.getState().setContractLoadStatus(status),
   setContractLoadError: (message: string | null) =>
     useLensStore.getState().setContractLoadError(message),
-  resetContractLoadState: () => useLensStore.getState().resetContractLoadState(),
+  resetContractLoadState: () =>
+    useLensStore.getState().resetContractLoadState(),
   loadContract: (contractId: string, keys: Array<string>) =>
     useLensStore.getState().loadContract(contractId, keys),
 }

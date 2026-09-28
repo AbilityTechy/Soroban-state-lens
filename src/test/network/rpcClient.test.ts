@@ -86,6 +86,35 @@ describe('callRpc', () => {
     })
   })
 
+  it('should forward caller cancellation to fetch', async () => {
+    const controller = new AbortController()
+    mockFetch.mockImplementationOnce(
+      (_url: string, options: RequestInit) =>
+        new Promise((_resolve, reject) => {
+          options.signal?.addEventListener('abort', () => {
+            reject(new DOMException('The operation was aborted.', 'AbortError'))
+          })
+        }),
+    )
+
+    const request = callRpc(
+      defaultConfig,
+      { method: 'test' },
+      controller.signal,
+    )
+    controller.abort()
+
+    expect(mockFetch).toHaveBeenCalledWith(
+      defaultConfig.url,
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    )
+    await expect(request).resolves.toMatchObject({
+      message: 'Request timeout',
+      code: 'TIMEOUT',
+      isTimeout: true,
+    })
+  })
+
   it('should work without body parameter', async () => {
     const mockData = { status: 'ok' }
     mockFetch.mockResolvedValueOnce({

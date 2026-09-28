@@ -26,9 +26,8 @@ describe('loadContract action', () => {
   })
 
   it('loads, decodes, and stores entries on success', async () => {
-    const { resetStore, getStoreState, useLensStore } = await import(
-      '../../store/lensStore'
-    )
+    const { resetStore, getStoreState, useLensStore } =
+      await import('../../store/lensStore')
     resetStore()
 
     mockGetLedgerEntries.mockResolvedValue({
@@ -60,9 +59,8 @@ describe('loadContract action', () => {
   })
 
   it('sets EMPTY when the load succeeds with no entries', async () => {
-    const { resetStore, getStoreState, useLensStore } = await import(
-      '../../store/lensStore'
-    )
+    const { resetStore, getStoreState, useLensStore } =
+      await import('../../store/lensStore')
     resetStore()
 
     mockGetLedgerEntries.mockResolvedValue({
@@ -84,10 +82,45 @@ describe('loadContract action', () => {
     expect(state.contractLoadError).toBeNull()
   })
 
+  it('replaces refreshed contract entries while preserving other contracts', async () => {
+    const { resetStore, getStoreState, useLensStore } =
+      await import('../../store/lensStore')
+    resetStore()
+
+    mockGetLedgerEntries
+      .mockResolvedValueOnce({
+        entries: [{ key: 'old-key', xdr: 'old-xdr' }],
+        latestLedger: 1,
+      })
+      .mockResolvedValueOnce({
+        entries: [{ key: 'other-key', xdr: 'other-xdr' }],
+        latestLedger: 2,
+      })
+      .mockResolvedValueOnce({
+        entries: [{ key: 'new-key', xdr: 'new-xdr' }],
+        latestLedger: 3,
+      })
+    mockDecodeScVal.mockResolvedValue({
+      kind: 'primitive',
+      path: [],
+      scType: 'string',
+      value: 'decoded',
+      raw: { switch: 'ScvString', value: 'decoded' },
+    })
+
+    await useLensStore.getState().loadContract('C1', ['old-key'])
+    await useLensStore.getState().loadContract('C2', ['other-key'])
+    await useLensStore.getState().loadContract('C1', ['new-key'])
+
+    const ledgerData = getStoreState().ledgerData
+    expect(ledgerData['C1::Other::old-key']).toBeUndefined()
+    expect(ledgerData['C1::Other::new-key'].rawXdr).toBe('new-xdr')
+    expect(ledgerData['C2::Other::other-key'].rawXdr).toBe('other-xdr')
+  })
+
   it('sets ERROR when load fails', async () => {
-    const { resetStore, getStoreState, useLensStore } = await import(
-      '../../store/lensStore'
-    )
+    const { resetStore, getStoreState, useLensStore } =
+      await import('../../store/lensStore')
     resetStore()
 
     mockGetLedgerEntries.mockRejectedValue(new Error('network failure'))
@@ -100,25 +133,26 @@ describe('loadContract action', () => {
   })
 
   it('ignores stale in-flight results and keeps newest response', async () => {
-    const { resetStore, getStoreState, useLensStore } = await import(
-      '../../store/lensStore'
-    )
+    const { resetStore, getStoreState, useLensStore } =
+      await import('../../store/lensStore')
     resetStore()
 
     let resolveFirst:
-      | ((
-          value: {
-            entries: Array<{
-              key: string
-              xdr: string
-              lastModifiedLedgerSeq?: number
-            }>
-            latestLedger: number
-          },
-        ) => void)
+      | ((value: {
+          entries: Array<{
+            key: string
+            xdr: string
+            lastModifiedLedgerSeq?: number
+          }>
+          latestLedger: number
+        }) => void)
       | undefined
     const firstPromise = new Promise<{
-      entries: Array<{ key: string; xdr: string; lastModifiedLedgerSeq?: number }>
+      entries: Array<{
+        key: string
+        xdr: string
+        lastModifiedLedgerSeq?: number
+      }>
       latestLedger: number
     }>((resolve) => {
       resolveFirst = resolve
@@ -127,9 +161,7 @@ describe('loadContract action', () => {
     mockGetLedgerEntries
       .mockReturnValueOnce(firstPromise)
       .mockResolvedValueOnce({
-        entries: [
-          { key: 'new-key', xdr: 'new-xdr', lastModifiedLedgerSeq: 2 },
-        ],
+        entries: [{ key: 'new-key', xdr: 'new-xdr', lastModifiedLedgerSeq: 2 }],
         latestLedger: 2,
       })
 

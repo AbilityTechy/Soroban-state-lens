@@ -1,6 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { startLedgerHeadPoll } from '../../lib/network/ledgerPoller'
 import { callRpc } from '../../lib/network/rpcClient'
+import { getStoreState, resetStore } from '../../store/lensStore'
+import { ConnectionStatus } from '../../store/types'
 
 vi.mock('../../lib/network/rpcClient', () => ({
   callRpc: vi.fn(),
@@ -17,6 +19,7 @@ describe('startLedgerHeadPoll', () => {
   beforeEach(() => {
     vi.clearAllMocks()
     vi.useFakeTimers()
+    resetStore()
   })
 
   afterEach(() => {
@@ -126,6 +129,60 @@ describe('startLedgerHeadPoll', () => {
       await vi.advanceTimersByTimeAsync(0)
       await vi.advanceTimersByTimeAsync(1000)
       expect(onLedgerChange).not.toHaveBeenCalled()
+      expect(getStoreState().connectionStatus).toBe(ConnectionStatus.ERROR)
+      stop()
+    })
+
+    it('reports failure and recovery through connection status callbacks', async () => {
+      mockCallRpc
+        .mockResolvedValueOnce({
+          message: 'Network error',
+          code: 'NETWORK_ERROR',
+        })
+        .mockResolvedValueOnce({ result: { sequence: 100 } })
+      const onError = vi.fn()
+      const onRecovery = vi.fn()
+      const stop = startLedgerHeadPoll({
+        rpcConfig: defaultRpcConfig,
+        intervalMs: 1000,
+        onLedgerChange: vi.fn(),
+        onError,
+        onRecovery,
+      })
+
+      await vi.advanceTimersByTimeAsync(0)
+      expect(getStoreState().connectionStatus).toBe(ConnectionStatus.ERROR)
+      expect(onError).toHaveBeenCalledOnce()
+      await vi.advanceTimersByTimeAsync(1000)
+      expect(getStoreState().connectionStatus).toBe(ConnectionStatus.SUCCESS)
+      expect(onRecovery).toHaveBeenCalledOnce()
+      stop()
+    })
+
+    it('polls immediately when the document becomes visible again', async () => {
+      mockCallRpc.mockResolvedValue({ result: { sequence: 100 } })
+      const stop = startLedgerHeadPoll({
+        rpcConfig: defaultRpcConfig,
+        intervalMs: 10000,
+        onLedgerChange: vi.fn(),
+      })
+
+      await vi.advanceTimersByTimeAsync(0)
+      expect(mockCallRpc).toHaveBeenCalledTimes(1)
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        value: 'hidden',
+      })
+      document.dispatchEvent(new Event('visibilitychange'))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(mockCallRpc).toHaveBeenCalledTimes(1)
+      Object.defineProperty(document, 'visibilityState', {
+        configurable: true,
+        value: 'visible',
+      })
+      document.dispatchEvent(new Event('visibilitychange'))
+      await vi.advanceTimersByTimeAsync(0)
+      expect(mockCallRpc).toHaveBeenCalledTimes(2)
       stop()
     })
   })
@@ -171,6 +228,24 @@ describe('startLedgerHeadPoll', () => {
       stop()
       await vi.advanceTimersByTimeAsync(5000)
       expect(mockCallRpc).toHaveBeenCalledTimes(1)
+    })
+
+    it('aborts the active latest-ledger request when stopped', () => {
+      let requestSignal: AbortSignal | undefined
+      mockCallRpc.mockImplementation((_config, _body, signal) => {
+        requestSignal = signal
+        return new Promise(() => {})
+      })
+      const stop = startLedgerHeadPoll({
+        rpcConfig: defaultRpcConfig,
+        intervalMs: 1000,
+        onLedgerChange: vi.fn(),
+      })
+
+      expect(requestSignal?.aborted).toBe(false)
+      stop()
+
+      expect(requestSignal?.aborted).toBe(true)
     })
   })
 
@@ -228,6 +303,7 @@ describe('startLedgerHeadPoll', () => {
           jsonrpc: '2.0',
           method: 'getLatestLedger',
         }),
+        expect.any(AbortSignal),
       )
       stop()
     })

@@ -1,5 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 
+import { startLedgerHeadPoll } from '../../lib/network/ledgerPoller'
+import { useNetworkConfig } from '../../store/lensStore'
 import Header from './Header'
 import Sidebar from './Sidebar'
 import SlimNav from './SlimNav'
@@ -16,6 +18,16 @@ export default function AppShell({ children }: AppShellProps) {
   const [mobileMenuOpen, setMobileMenuOpen] = useState(false)
   const [desktopSidebarOpen, setDesktopSidebarOpen] = useState(true)
   const [activeNavItem, setActiveNavItem] = useState('watchlist')
+  const networkConfig = useNetworkConfig()
+
+  useEffect(
+    () =>
+      startLedgerHeadPoll({
+        rpcConfig: { url: networkConfig.rpcUrl, timeout: 5000 },
+        onLedgerChange: () => {},
+      }),
+    [networkConfig.rpcUrl],
+  )
 
   return (
     <div className="h-screen flex flex-col overflow-hidden">

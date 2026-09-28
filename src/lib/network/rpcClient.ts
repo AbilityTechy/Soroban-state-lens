@@ -1,15 +1,23 @@
-import type { RpcConfig, RpcError } from './types'
 import { normalizeRpcUrl } from '../validation/normalizeRpcUrl'
+import type { RpcConfig, RpcError } from './types'
 
 export async function callRpc<T = unknown>(
   config: RpcConfig,
   body?: unknown,
+  signal?: AbortSignal,
 ): Promise<T | RpcError> {
   const controller = new AbortController()
   const timeoutId = setTimeout(() => controller.abort(), config.timeout)
+  const abortRequest = () => controller.abort()
+  if (signal?.aborted) {
+    controller.abort()
+  } else {
+    signal?.addEventListener('abort', abortRequest, { once: true })
+  }
   const normalized = normalizeRpcUrl(config.url)
   if (normalized === '') {
     clearTimeout(timeoutId)
+    signal?.removeEventListener('abort', abortRequest)
     throw new Error('Invalid RPC URL')
   }
   try {
@@ -22,8 +30,6 @@ export async function callRpc<T = unknown>(
       body: body ? JSON.stringify(body) : undefined,
       signal: controller.signal,
     })
-
-    clearTimeout(timeoutId)
 
     if (!response.ok) {
       const errorText = await response.text().catch(() => 'Unknown error')
@@ -38,8 +44,6 @@ export async function callRpc<T = unknown>(
     const data = await response.json()
     return data as T
   } catch (error) {
-    clearTimeout(timeoutId)
-
     if (
       (error instanceof Error && error.name === 'AbortError') ||
       (error instanceof DOMException && error.name === 'AbortError')
@@ -67,5 +71,8 @@ export async function callRpc<T = unknown>(
       details: error,
       isTimeout: false,
     }
+  } finally {
+    clearTimeout(timeoutId)
+    signal?.removeEventListener('abort', abortRequest)
   }
 }
