@@ -3,6 +3,22 @@ import { computeRetryDelayMs } from './computeRetryDelayMs'
 import { withJitter } from './withJitter'
 import { isJsonRpcErrorResponse } from './isJsonRpcErrorResponse'
 
+function isAbortError(error: unknown): boolean {
+  if (error instanceof Error && error.name === 'AbortError') {
+    return true
+  }
+
+  if (
+    typeof DOMException !== 'undefined' &&
+    error instanceof DOMException &&
+    error.name === 'AbortError'
+  ) {
+    return true
+  }
+
+  return false
+}
+
 export interface RpcRetryOptions {
   maxAttempts?: number
   baseDelayMs?: number
@@ -11,33 +27,58 @@ export interface RpcRetryOptions {
   signal?: AbortSignal
 }
 
-function delayWithSignal(ms: number, signal?: AbortSignal) {
-  return new Promise<void>((resolve, reject) => {
-    const id = setTimeout(() => {
+function normalizeMaxAttempts(value: number | undefined): number {
+  if (value === undefined) return 3
+  if (!Number.isFinite(value) || value < 1) return 1
+  return Math.floor(value)
+}
+
+function normalizeDelay(value: number | undefined, defaultValue: number): number {
+  if (value === undefined) return defaultValue
+  if (!Number.isFinite(value) || value < 0) return 0
+  return value
+}
+
+function normalizeJitterRatio(value: number | undefined): number {
+  if (value === undefined) return 0.2
+  if (!Number.isFinite(value)) return 0
+  return Math.min(1, Math.max(0, value))
+}
+
+function createAbortError(): Error {
+  if (typeof DOMException !== 'undefined') {
+    return new DOMException('The operation was aborted.', 'AbortError')
+  }
+
+  const error = new Error('The operation was aborted.')
+  error.name = 'AbortError'
+  return error
+}
+
+const delay = (ms: number, signal?: AbortSignal) =>
+  new Promise<void>((resolve, reject) => {
+    if (signal?.aborted) {
+      reject(createAbortError())
+      return
+    }
+
+    const timeoutId = setTimeout(() => {
       cleanup()
       resolve()
     }, ms)
 
-    function onAbort() {
-      clearTimeout(id)
+    const onAbort = () => {
       cleanup()
-      const err = new Error('The operation was aborted')
-      err.name = 'AbortError'
-      reject(err)
+      reject(createAbortError())
     }
 
-    function cleanup() {
+    const cleanup = () => {
+      clearTimeout(timeoutId)
       signal?.removeEventListener('abort', onAbort)
-    }
-
-    if (signal?.aborted) {
-      onAbort()
-      return
     }
 
     signal?.addEventListener('abort', onAbort, { once: true })
   })
-}
 
 function isRpcClientError(value: unknown): boolean {
   if (typeof value !== 'object' || value === null) {
@@ -106,20 +147,16 @@ export async function withRpcRetries<T>(
   operation: () => Promise<T>,
   options: RpcRetryOptions = {},
 ): Promise<T> {
-  const maxAttempts = options.maxAttempts ?? 3
-  const baseDelayMs = options.baseDelayMs ?? 250
-  const maxDelayMs = options.maxDelayMs ?? 5000
-  const jitterRatio = options.jitterRatio ?? 0.2
+  const maxAttempts = normalizeMaxAttempts(options.maxAttempts)
+  const baseDelayMs = normalizeDelay(options.baseDelayMs, 250)
+  const maxDelayMs = normalizeDelay(options.maxDelayMs, 5000)
+  const jitterRatio = normalizeJitterRatio(options.jitterRatio)
   const signal = options.signal
 
   let attempt = 1
 
   for (;;) {
-    if (signal?.aborted) {
-      const err = new Error('The operation was aborted')
-      err.name = 'AbortError'
-      throw err
-    }
+    if (signal?.aborted) throw createAbortError()
     let result: T | undefined
     let errorObj: unknown = null
     let didThrow = false
@@ -151,7 +188,15 @@ export async function withRpcRetries<T>(
 
     const delayMs = computeRetryDelayMs(attempt - 1, baseDelayMs, maxDelayMs)
     const jitteredMs = withJitter(delayMs, jitterRatio)
-    await delayWithSignal(jitteredMs, signal)
+
+    try {
+      await delay(jitteredMs, options.signal)
+    } catch (error) {
+      if (isAbortError(error)) {
+        throw error
+      }
+      throw error
+    }
 
     attempt++
   }

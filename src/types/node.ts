@@ -58,6 +58,8 @@ export type PrimitiveKind =
   | 'i32'
   | 'u64'
   | 'i64'
+  | 'timepoint'
+  | 'duration'
   | 'u128'
   | 'i128'
   | 'u256'
@@ -65,6 +67,8 @@ export type PrimitiveKind =
   | 'string'
   | 'symbol'
   | 'void'
+  | 'timepoint'
+  | 'duration'
 
 /**
  * A primitive scalar value with its ScVal variant name and raw value.
@@ -166,6 +170,7 @@ export interface UnsupportedNode {
   kind: 'unsupported'
   path: Path
   variant: string
+  sourceType?: string
   raw: RawScVal
 }
 

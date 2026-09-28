@@ -21,6 +21,17 @@ describe('serializeExpandedNodes', () => {
     expect(serializeExpandedNodes(['z', 'a', 'b'])).toBe('["z","a","b"]')
   })
 
+  it('should cap serialized output by retaining the earliest entries', () => {
+    const result = serializeExpandedNodes(['a', 'b', 'c', 'd'], 12)
+    expect(JSON.parse(result)).toEqual(['a', 'b'])
+    expect(result.length).toBeLessThanOrEqual(12)
+  })
+
+  it('should keep under-budget results intact', () => {
+    const result = serializeExpandedNodes(['a', 'b'], 20)
+    expect(JSON.parse(result)).toEqual(['a', 'b'])
+  })
+
   it('should handle non-array inputs gracefully', () => {
     // @ts-ignore - testing runtime behavior for non-string array
     expect(serializeExpandedNodes(null)).toBe('[]')
@@ -31,5 +42,11 @@ describe('serializeExpandedNodes', () => {
   it('should produce compact JSON (no spaces)', () => {
     const result = serializeExpandedNodes(['node1', 'node2'])
     expect(result).not.toContain(' ')
+  })
+
+  it('should filter out blank node IDs and preserve valid order', () => {
+    expect(
+      serializeExpandedNodes(['node1', '', '  ', 'node2', '\n\t', 'node1']),
+    ).toBe('["node1","node2"]')
   })
 })

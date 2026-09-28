@@ -10,17 +10,6 @@ export enum ConnectionStatus {
   ERROR = 'error',
 }
 
-// Display preferences
-export enum ByteDisplayMode {
-  HEX = 'hex',
-  BASE64 = 'base64',
-}
-
-export enum BigIntDisplayMode {
-  RAW = 'raw',
-  FORMATTED = 'formatted',
-}
-
 // Network configuration
 export interface NetworkConfig {
   networkId: string
@@ -100,6 +89,7 @@ export interface SnapshotSlice {
     contractId: string,
     entries: Record<string, LedgerEntry>,
     label?: string,
+    maxSnapshots?: number,
   ) => void
   getSnapshots: (contractId: string) => Array<ContractSnapshot>
   removeSnapshot: (contractId: string, snapshotId: string) => void
@@ -149,10 +139,36 @@ export interface WatchlistSlice {
   clearWatchlist: (contractId: string) => void
 }
 
-// Preferences slice
-export interface PreferencesSlice {
+// Contract spec slice – parsed schema data keyed by contract ID
+export interface ContractSpecSlice {
+  contractSpecs: Record<string, unknown>
+  setContractSpec: (contractId: string, spec: unknown) => void
+  getContractSpec: (contractId: string) => unknown
+  clearContractSpec: (contractId: string) => void
+}
+
+// Display preferences enums
+export enum ByteDisplayMode {
+  HEX = 'hex',
+  BASE64 = 'base64',
+  UTF8 = 'utf8',
+}
+
+export enum BigIntDisplayMode {
+  DECIMAL = 'decimal',
+  HEX = 'hex',
+  SCIENTIFIC = 'scientific',
+}
+
+// Display preferences
+export interface DisplayPreferences {
   byteDisplayMode: ByteDisplayMode
   bigIntDisplayMode: BigIntDisplayMode
+}
+
+// Preferences slice
+export interface PreferencesSlice {
+  preferences: DisplayPreferences
   setByteDisplayMode: (mode: ByteDisplayMode) => void
   setBigIntDisplayMode: (mode: BigIntDisplayMode) => void
   resetPreferences: () => void
@@ -167,6 +183,7 @@ export interface LensStore
     SnapshotSlice,
     ContractSlice,
     ContractLoadSlice,
+    ContractSpecSlice,
     PreferencesSlice,
     WatchlistSlice {}
 
@@ -190,4 +207,12 @@ export const DEFAULT_NETWORKS: Record<string, NetworkConfig> = {
     rpcUrl: 'https://soroban.stellar.org',
     horizonUrl: 'https://horizon.stellar.org',
   },
+}
+
+/**
+ * Default display preferences
+ */
+export const DEFAULT_PREFERENCES: DisplayPreferences = {
+  byteDisplayMode: ByteDisplayMode.HEX,
+  bigIntDisplayMode: BigIntDisplayMode.DECIMAL,
 }

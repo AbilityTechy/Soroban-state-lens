@@ -1,7 +1,6 @@
 import { buildJsonRpcRequest } from '../rpc/buildJsonRpcRequest'
 import { toRpcRequestId } from '../rpc/toRpcRequestId'
-import { useLensStore } from '../../store/lensStore'
-import { ConnectionStatus } from '../../store/types'
+import { withJitter } from '../rpc/withJitter'
 import { callRpc } from './rpcClient'
 import type { LatestLedgerResult, RpcConfig, RpcError } from './types'
 
@@ -9,8 +8,7 @@ export interface LedgerHeadPollOptions {
   rpcConfig: RpcConfig
   intervalMs?: number
   onLedgerChange: (sequence: number) => void
-  onError?: (error: Error) => void
-  onRecovery?: () => void
+  onError?: (error: RpcError) => void
 }
 
 const DEFAULT_INTERVAL_MS = 5000
@@ -32,44 +30,37 @@ export function startLedgerHeadPoll(
     intervalMs = DEFAULT_INTERVAL_MS,
     onLedgerChange,
     onError,
-    onRecovery,
   } = options
 
   let lastSequence: number | null = null
   const stoppedRef = { current: false }
-  let activeController: AbortController | null = null
-
-  const reportFailure = (error: Error): void => {
-    const wasError =
-      useLensStore.getState().connectionStatus === ConnectionStatus.ERROR
-    useLensStore.getState().setConnectionStatus(ConnectionStatus.ERROR)
-    if (!wasError) onError?.(error)
-  }
+  const inFlightRef = { current: false }
 
   const tick = async (): Promise<void> => {
-    if (stoppedRef.current || activeController) return
-    if (
-      typeof document !== 'undefined' &&
-      document.visibilityState === 'hidden'
-    ) {
-      return
-    }
+    if (stoppedRef.current) return
+    if (inFlightRef.current) return
+    // Skip RPC call while the tab is hidden; lastSequence is preserved so the
+    // next visible tick can detect a sequence change correctly.
+    if (document.visibilityState === 'hidden') return
 
-    const body = buildJsonRpcRequest('getLatestLedger', {}, toRpcRequestId())
-    const controller = new AbortController()
-    activeController = controller
-
+    inFlightRef.current = true
     try {
-      const response = await callRpc<{ result?: LatestLedgerResult }>(
-        rpcConfig,
-        body,
-        controller.signal,
-      )
+      const body = buildJsonRpcRequest('getLatestLedger', {}, toRpcRequestId())
+      let response: { result?: LatestLedgerResult } | RpcError
+      try {
+        response = await callRpc<{ result?: LatestLedgerResult }>(
+          rpcConfig,
+          body,
+        )
+      } catch {
+        // A transient RPC failure must not terminate the polling loop.
+        return
+      }
 
       // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- stop() can run during await
       if (stoppedRef.current) return
       if (isRpcError(response)) {
-        reportFailure(new Error(response.message || 'Connection failed'))
+        onError?.(response)
         return
       }
 
@@ -78,51 +69,55 @@ export function startLedgerHeadPoll(
         result == null ||
         typeof result !== 'object' ||
         typeof result.sequence !== 'number' ||
-        !Number.isFinite(result.sequence)
+        !Number.isFinite(result.sequence) ||
+        !Number.isInteger(result.sequence) ||
+        result.sequence < 0
       ) {
-        reportFailure(new Error('Invalid response from RPC server'))
         return
       }
-
-      const wasError =
-        useLensStore.getState().connectionStatus === ConnectionStatus.ERROR
-      useLensStore.getState().setConnectionStatus(ConnectionStatus.SUCCESS)
-      if (wasError) onRecovery?.()
 
       const { sequence } = result
       if (lastSequence === null || sequence > lastSequence) {
         lastSequence = sequence
         onLedgerChange(sequence)
       }
-    } catch (error) {
-      // eslint-disable-next-line @typescript-eslint/no-unnecessary-condition -- stop() can run during await
-      if (!stoppedRef.current) {
-        reportFailure(
-          error instanceof Error ? error : new Error('Connection failed'),
-        )
-      }
     } finally {
-      activeController = null
+      inFlightRef.current = false
     }
   }
 
-  useLensStore.getState().setConnectionStatus(ConnectionStatus.LOADING)
-  const intervalId = setInterval(tick, intervalMs)
+  // Resume immediately when the tab becomes visible again so the UI catches up
+  // without waiting for the next scheduled poll.
+  const onVisibilityChange = (): void => {
+    if (document.visibilityState === 'visible') {
+      void tick()
+    }
+  }
+
+  document.addEventListener('visibilitychange', onVisibilityChange)
+
+  let timeoutId: ReturnType<typeof setTimeout> | null = null
+
+  const scheduleNextPoll = (): void => {
+    if (stoppedRef.current) return
+
+    const delayMs = withJitter(intervalMs)
+    timeoutId = setTimeout(async () => {
+      if (stoppedRef.current) return
+      await tick()
+      scheduleNextPoll()
+    }, delayMs)
+  }
+
   tick()
-  const handleVisibilityChange = () => {
-    if (document.visibilityState === 'visible') void tick()
-  }
-  if (typeof document !== 'undefined') {
-    document.addEventListener('visibilitychange', handleVisibilityChange)
-  }
+  scheduleNextPoll()
 
   return function stop(): void {
     if (stoppedRef.current) return
     stoppedRef.current = true
-    clearInterval(intervalId)
-    activeController?.abort()
-    if (typeof document !== 'undefined') {
-      document.removeEventListener('visibilitychange', handleVisibilityChange)
+    if (timeoutId !== null) {
+      clearTimeout(timeoutId)
     }
+    document.removeEventListener('visibilitychange', onVisibilityChange)
   }
 }
