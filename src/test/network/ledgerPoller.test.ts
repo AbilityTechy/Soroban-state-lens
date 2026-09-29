@@ -1,8 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { startLedgerHeadPoll } from '../../lib/network/ledgerPoller'
 import { callRpc } from '../../lib/network/rpcClient'
-import { getStoreState, resetStore } from '../../store/lensStore'
-import { ConnectionStatus } from '../../store/types'
 
 vi.mock('../../lib/network/rpcClient', () => ({
   callRpc: vi.fn(),
@@ -172,8 +170,9 @@ describe('startLedgerHeadPoll', () => {
       },
     )
 
-    it('does not call onLedgerChange when RPC returns error', async () => {
+    it('reports RPC errors without calling onLedgerChange', async () => {
       const onLedgerChange = vi.fn()
+      const onError = vi.fn()
       const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.5)
       mockCallRpc.mockResolvedValue({
         message: 'Network error',
@@ -184,16 +183,19 @@ describe('startLedgerHeadPoll', () => {
         rpcConfig: defaultRpcConfig,
         intervalMs: 1000,
         onLedgerChange,
+        onError,
       })
 
       await vi.advanceTimersByTimeAsync(0)
       await vi.advanceTimersByTimeAsync(1000)
       expect(onLedgerChange).not.toHaveBeenCalled()
-      expect(getStoreState().connectionStatus).toBe(ConnectionStatus.ERROR)
+      expect(onError).toHaveBeenCalledTimes(2)
       stop()
+      randomSpy.mockRestore()
     })
 
     it('reports failure and recovery through connection status callbacks', async () => {
+      const randomSpy = vi.spyOn(Math, 'random').mockReturnValue(0.5)
       mockCallRpc
         .mockResolvedValueOnce({
           message: 'Network error',
@@ -211,12 +213,11 @@ describe('startLedgerHeadPoll', () => {
       })
 
       await vi.advanceTimersByTimeAsync(0)
-      expect(getStoreState().connectionStatus).toBe(ConnectionStatus.ERROR)
       expect(onError).toHaveBeenCalledOnce()
       await vi.advanceTimersByTimeAsync(1000)
-      expect(getStoreState().connectionStatus).toBe(ConnectionStatus.SUCCESS)
       expect(onRecovery).toHaveBeenCalledOnce()
       stop()
+      randomSpy.mockRestore()
     })
 
     it('polls immediately when the document becomes visible again', async () => {
@@ -244,7 +245,6 @@ describe('startLedgerHeadPoll', () => {
       await vi.advanceTimersByTimeAsync(0)
       expect(mockCallRpc).toHaveBeenCalledTimes(2)
       stop()
-      randomSpy.mockRestore()
     })
 
     it('reports one error per failed tick and resumes after recovery', async () => {

@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react'
 
 import { startLedgerHeadPoll } from '../../lib/network/ledgerPoller'
-import { useNetworkConfig } from '../../store/lensStore'
+import { useLensStore, useNetworkConfig } from '../../store/lensStore'
+import { ConnectionStatus } from '../../store/types'
 import Header from './Header'
 import Sidebar from './Sidebar'
 import SlimNav from './SlimNav'
@@ -19,14 +20,17 @@ export default function AppShell({ children }: AppShellProps) {
   const [desktopSidebarOpen, setDesktopSidebarOpen] = useState(true)
   const [activeNavItem, setActiveNavItem] = useState('watchlist')
   const networkConfig = useNetworkConfig()
+  const setConnectionStatus = useLensStore((state) => state.setConnectionStatus)
 
   useEffect(
     () =>
       startLedgerHeadPoll({
         rpcConfig: { url: networkConfig.rpcUrl, timeout: 5000 },
         onLedgerChange: () => {},
+        onError: () => setConnectionStatus(ConnectionStatus.ERROR),
+        onRecovery: () => setConnectionStatus(ConnectionStatus.SUCCESS),
       }),
-    [networkConfig.rpcUrl],
+    [networkConfig.rpcUrl, setConnectionStatus],
   )
 
   return (

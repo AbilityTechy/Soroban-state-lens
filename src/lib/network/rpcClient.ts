@@ -99,7 +99,7 @@ export async function callRpc<T = unknown>(
   // in-flight RPC calls. The internal timeout controller still drives the
   // fetch signal; the caller signal only fans its abort into that controller.
   let callerAborted = false
-  const callerSignal = config.signal
+  const callerSignal = signal ?? config.signal
   const onCallerAbort = () => {
     callerAborted = true
     controller.abort()

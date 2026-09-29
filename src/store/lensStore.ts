@@ -71,7 +71,7 @@ const createNetworkConfigSlice = (
     }),
 
   resetNetworkConfig: () =>
-    set((state) => ({
+    set(() => ({
       networkConfig: DEFAULT_NETWORK_CONFIG,
       connectionStatus: ConnectionStatus.IDLE,
       lastCustomUrl: undefined,
